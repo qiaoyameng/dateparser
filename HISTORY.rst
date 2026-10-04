@@ -3,6 +3,19 @@
 History
 =======
 
+Unreleased
+----------
+
+New features:
+
+- Add an interval result mode: ``DateDataParser.get_interval_data()`` returns
+  a ``DateInterval`` with the minimal interpretable time interval of the
+  parsed string on calendar boundaries (a month is a calendar month, and a
+  time zone aware day crossing a DST transition is not 24 hours), its
+  precision, the source of each part (``"input"``, ``"relative_base"`` or
+  ``"preference"``), and the base and meaning of weekday-only and relative
+  inputs, without changing the default ``DateData`` date selection
+
 1.4.3 (2026-09-03)
 ------------------
 

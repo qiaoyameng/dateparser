@@ -12,6 +12,7 @@ import regex as re
 from dateparser.utils import (
     _get_missing_parts,
     _get_parts,
+    _get_time_parts,
     _now,
     get_last_day_of_month,
     get_next_leap_year,
@@ -86,8 +87,11 @@ def _parse_absolute(
     settings: "Settings",
     tz: tzinfo | None = None,
     date_order: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> tuple[datetime, str | None, tuple[str, ...]]:
-    return _parser.parse(datestring, settings, tz, date_order=date_order)
+    return _parser.parse(
+        datestring, settings, tz, date_order=date_order, metadata=metadata
+    )
 
 
 def _parse_nospaces(
@@ -95,8 +99,11 @@ def _parse_nospaces(
     settings: "Settings",
     tz: tzinfo | None = None,
     date_order: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> tuple[datetime, str, tuple[str, ...]]:
-    return _no_spaces_parser.parse(datestring, settings, date_order=date_order)
+    return _no_spaces_parser.parse(
+        datestring, settings, date_order=date_order, metadata=metadata
+    )
 
 
 class _time_parser:
@@ -119,6 +126,19 @@ class _time_parser:
             except ValueError:
                 pass
         raise ValueError(f"{_timestring} does not seem to be a valid time string")
+
+    @classmethod
+    def get_parts(cls, timestring: str) -> tuple[str, ...]:
+        """Return the time parts (hour, minute, second, microsecond) that
+        *timestring* provides, based on the first matching time directive."""
+        for directive in cls.time_directives:
+            try:
+                strptime(timestring.strip(), directive)
+            except ValueError:
+                pass
+            else:
+                return _get_time_parts(directive)
+        raise ValueError(f"{timestring} does not seem to be a valid time string")
 
 
 time_parser = _time_parser()
@@ -218,7 +238,11 @@ class _no_spaces_parser:
 
     @classmethod
     def parse(
-        cls, datestring: str, settings: "Settings", date_order: str | None = None
+        cls,
+        datestring: str,
+        settings: "Settings",
+        date_order: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[datetime, str, tuple[str, ...]]:
         if not no_space_parser_eligibile(datestring):
             raise ValueError(f"Unable to parse date from: {datestring}")
@@ -235,6 +259,8 @@ class _no_spaces_parser:
             if EIGHT_DIGIT.match(datestring):
                 dt = cls._find_best_matching_date(datestring)
                 if dt is not None:
+                    if metadata is not None:
+                        metadata["time_parts"] = ()
                     return dt
         nsp = cls()
         ambiguous_date: tuple[datetime, str, tuple[str, ...]] | None = None
@@ -248,6 +274,8 @@ class _no_spaces_parser:
 
                     missing = _get_missing_parts(fmt)
                     _check_strict_parsing(missing, settings)
+                    if metadata is not None:
+                        metadata["time_parts"] = _get_time_parts(fmt)
                     return dt
         if ambiguous_date:
             return ambiguous_date
@@ -513,6 +541,14 @@ class _parser:
             parts += ("time",)
         return parts
 
+    def _get_time_parts(self) -> tuple[str, ...]:
+        if self.time is None or self._token_time is None:
+            return ()
+        try:
+            return time_parser.get_parts(self._token_time)
+        except ValueError:
+            return ()
+
     def _get_datetime_obj(self, **params: Any) -> datetime:
         try:
             return datetime(**params)
@@ -728,6 +764,7 @@ class _parser:
         settings: "Settings",
         tz: tzinfo | None = None,
         date_order: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[datetime, str | None, tuple[str, ...]]:
         tokens = list(tokenizer(datestring).tokenize())
         date_order = date_order or settings.DATE_ORDER
@@ -748,6 +785,7 @@ class _parser:
             dateobj = po._results()
 
         # correction for past, future if applicable
+        has_date_token = bool(po._token_year or po._token_month or po._token_day)
         dateobj = po._correct_for_time_frame(dateobj, tz)
 
         # correction for preference of month: beginning, current, end
@@ -758,6 +796,15 @@ class _parser:
         dateobj = po._correct_for_day(dateobj)
 
         period = po._get_period()
+
+        if metadata is not None:
+            metadata["time_parts"] = po._get_time_parts()
+            metadata["base"] = po.now
+            if not has_date_token:
+                # No explicit date tokens: the date was resolved from the
+                # base, either through a weekday or through the base itself.
+                metadata["weekday_only"] = hasattr(po, "_token_weekday")
+                metadata["input_parts"] = ("time",) if po.time else ()
 
         return dateobj, period, po._get_parts()
 

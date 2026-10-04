@@ -8,6 +8,7 @@ from ._parts_of_day import PartOfDay as PartOfDay
 from ._parts_of_day import PartsOfDay as PartsOfDay
 from .conf import Settings, apply_settings
 from .date import DateDataParser as DateDataParser
+from .interval import DateInterval as DateInterval
 
 _default_parser = DateDataParser()
 

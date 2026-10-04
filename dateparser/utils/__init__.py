@@ -84,6 +84,24 @@ _PART_DIRECTIVES = {
 }
 
 
+_TIME_PART_DIRECTIVES = {
+    "hour": ["%H", "%-H", "%I", "%-I"],
+    "minute": ["%M", "%-M"],
+    "second": ["%S", "%-S"],
+    "microsecond": ["%f"],
+}
+
+
+def _get_time_parts(fmt: str) -> tuple[str, ...]:
+    """Return a tuple with the time parts (hour, minute, second, microsecond)
+    that a date format provides, based on its directives."""
+    return tuple(
+        part
+        for part, directives in _TIME_PART_DIRECTIVES.items()
+        if any(directive in fmt for directive in directives)
+    )
+
+
 def _get_parts(fmt: str) -> tuple[str, ...]:
     """Return a tuple with the parts (year, month, day, time) that a date format
     provides, based on its directives."""

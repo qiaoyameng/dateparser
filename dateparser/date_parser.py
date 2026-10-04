@@ -15,6 +15,7 @@ class DateParser:
         parse_method: Callable[..., tuple[datetime, str | None, tuple[str, ...]]],
         settings: Settings | dict[str, Any] | None = None,
         date_order: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[datetime, str | None, tuple[str, ...]]:
         assert isinstance(settings, Settings)
         date_string = str(date_string)
@@ -26,7 +27,11 @@ class DateParser:
         date_string, ptz = pop_tz_offset_from_string(date_string)
 
         date_obj, period, parts = parse_method(
-            date_string, settings=settings, tz=ptz, date_order=date_order
+            date_string,
+            settings=settings,
+            tz=ptz,
+            date_order=date_order,
+            metadata=metadata,
         )
 
         _settings_tz = settings.TIMEZONE.lower()

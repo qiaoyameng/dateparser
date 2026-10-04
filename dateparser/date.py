@@ -16,6 +16,7 @@ from dateparser.conf import Settings, apply_settings, check_settings
 from dateparser.custom_language_detection.language_mapping import map_languages
 from dateparser.date_parser import date_parser
 from dateparser.freshness_date_parser import freshness_date_parser
+from dateparser.interval import interval_from_date_data
 from dateparser.languages.loader import LocaleDataLoader
 from dateparser.parser import _parse_absolute, _parse_nospaces
 from dateparser.timezone_parser import pop_tz_offset_from_string
@@ -23,6 +24,7 @@ from dateparser.utils import (
     _get_localzone,
     _get_missing_parts,
     _get_parts,
+    _get_time_parts,
     _now,
     apply_timezone_from_settings,
     get_next_leap_year,
@@ -34,6 +36,7 @@ from dateparser.utils import (
 from dateparser.utils.strptime import strptime as patched_strptime
 
 if TYPE_CHECKING:
+    from dateparser.interval import DateInterval
     from dateparser.languages.locale import Locale
 
 _D = TypeVar("_D", bound=date)
@@ -263,6 +266,25 @@ def get_date_from_timestamp(
     return None
 
 
+def _timestamp_time_parts(
+    date_string: str, negative: bool = False
+) -> tuple[str, ...]:
+    """Return the time parts a timestamp provides, based on its length:
+    10 digits for seconds, plus 3 for milliseconds and 3 for microseconds."""
+    if negative:
+        match = RE_SEARCH_NEGATIVE_TIMESTAMP.search(date_string)
+    else:
+        match = RE_SEARCH_TIMESTAMP.search(date_string)
+    if not match:
+        return ()
+    parts = ["hour", "minute", "second"]
+    if match.group(2):
+        parts.append("millisecond")
+    if match.group(3):
+        parts.append("microsecond")
+    return tuple(parts)
+
+
 def _apply_century_preference(
     date_obj: datetime, now: datetime, prefer_from: str
 ) -> datetime:
@@ -337,9 +359,15 @@ def parse_with_formats(
 
             date_obj = apply_timezone_from_settings(date_obj, settings)
 
-            return DateData(
+            date_data = DateData(
                 date_obj=date_obj, period=period, parts=_get_parts(date_format)
             )
+            time_parts = _get_time_parts(date_format)
+            if time_parts:
+                date_data.time_parts = time_parts
+            if _missing:
+                date_data.base = now
+            return date_data
     return DateData(date_obj=None, period=period)
 
 
@@ -504,22 +532,35 @@ class _DateLocaleParser:
             if self._is_valid_date_data(date_data):
                 if self._part_of_day:
                     date_data.part_of_day = self._part_of_day
-                    if (
-                        self._part_of_day_sets_time
-                        and self._settings.RETURN_TIME_AS_PERIOD
-                    ):
-                        date_data.period = "part_of_day"
+                    if self._part_of_day_sets_time:
+                        # The time comes from the PARTS_OF_DAY setting, not
+                        # from the parsed string.
+                        if date_data.time_parts:
+                            date_data.time_parts = ()
+                        if date_data.input_parts is not None:
+                            date_data.input_parts = tuple(
+                                part
+                                for part in date_data.input_parts
+                                if part != "time"
+                            )
+                        if self._settings.RETURN_TIME_AS_PERIOD:
+                            date_data.period = "part_of_day"
                 return date_data
         return None
 
     def _try_timestamp_parser(self, negative: bool = False) -> "DateData":
-        return DateData(
+        date_data = DateData(
             date_obj=get_date_from_timestamp(
                 self.date_string, self._settings, negative=negative
             ),
             period="time" if self._settings.RETURN_TIME_AS_PERIOD else "day",
             parts=("year", "month", "day", "time"),
         )
+        if date_data.date_obj is not None:
+            date_data.time_parts = _timestamp_time_parts(
+                self.date_string, negative=negative
+            )
+        return date_data
 
     def _try_timestamp(self) -> "DateData":
         return self._try_timestamp_parser()
@@ -573,13 +614,17 @@ class _DateLocaleParser:
 
         for order in candidates:
             try:
+                metadata: dict[str, Any] = {}
                 date_obj, period, parts = date_parser.parse(
                     translated,
                     parse_method=parse_method,
                     settings=self._settings,
                     date_order=order,
+                    metadata=metadata,
                 )
-                return DateData(date_obj=date_obj, period=period, parts=parts)
+                date_data = DateData(date_obj=date_obj, period=period, parts=parts)
+                date_data._set_parse_metadata(metadata)
+                return date_data
             except ValueError:
                 continue
         return None
@@ -656,6 +701,47 @@ class DateData:
     ``"part_of_day"``.
     """
 
+    time_parts: tuple[str, ...] = ()
+    """Time components of :attr:`date_obj` determined by the parsed string, as
+    a tuple with some or all of ``"hour"``, ``"minute"``, ``"second"``,
+    ``"millisecond"`` and ``"microsecond"``, in that order. Empty when the
+    string provides no time, or when the time comes from a setting such as
+    ``PARTS_OF_DAY``.
+
+    .. versionadded:: VERSION
+    """
+
+    base: datetime | None = None
+    """Reference datetime used to complete the parts that the parsed string
+    does not determine: ``RELATIVE_BASE`` when set, otherwise the current
+    time at parse. ``None`` when every part of :attr:`date_obj` comes from
+    the parsed string.
+
+    .. versionadded:: VERSION
+    """
+
+    relative: bool = False
+    """Whether :attr:`date_obj` was resolved from a relative expression like
+    ``"2 hours ago"``, i.e. by shifting :attr:`base`.
+
+    .. versionadded:: VERSION
+    """
+
+    weekday_only: bool = False
+    """Whether the parsed string provides a weekday and no date, so that
+    :attr:`date_obj` is the date of that weekday relative to :attr:`base`.
+
+    .. versionadded:: VERSION
+    """
+
+    input_parts: tuple[str, ...] | None = None
+    """Parts explicitly present in the parsed string when they differ from
+    :attr:`parts`, e.g. ``()`` for ``"yesterday"`` or ``("time",)`` for
+    ``"4pm"``. ``None`` when they are the same as :attr:`parts`.
+
+    .. versionadded:: VERSION
+    """
+
     def __init__(
         self,
         *,
@@ -672,6 +758,25 @@ class DateData:
         tuple with some or all of ``"year"``, ``"month"``, ``"day"`` and
         ``"time"``, in that order. The remaining parts come from
         :ref:`settings`, e.g. ``RELATIVE_BASE`` or ``PREFER_DAY_OF_MONTH``."""
+
+    def _set_parse_metadata(self, metadata: dict[str, Any]) -> None:
+        """Record parsing metadata used by the interval result mode."""
+        if metadata.get("time_parts"):
+            self.time_parts = metadata["time_parts"]
+        if metadata.get("weekday_only"):
+            self.weekday_only = True
+        if metadata.get("relative"):
+            self.relative = True
+        if metadata.get("input_parts") is not None:
+            self.input_parts = metadata["input_parts"]
+        base = metadata.get("base")
+        if base is not None and (
+            self.relative
+            or self.weekday_only
+            or self.input_parts is not None
+            or any(part not in self.parts for part in ("year", "month", "day"))
+        ):
+            self.base = base
 
     def __getitem__(self, k: str) -> Any:
         if not hasattr(self, k):
@@ -957,10 +1062,49 @@ class DateDataParser:
 
     def get_date_tuple(self, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         date_data = self.get_date_data(*args, **kwargs)
-        fields = {k: v for k, v in date_data.__dict__.items() if k != "parts"}
+        fields = {
+            k: v
+            for k, v in date_data.__dict__.items()
+            if k
+            not in (
+                "parts",
+                "time_parts",
+                "base",
+                "relative",
+                "weekday_only",
+                "input_parts",
+            )
+        }
         date_tuple = collections.namedtuple("DateData", fields)  # type: ignore[misc]  # noqa: PYI024
         result: tuple[Any, ...] = date_tuple(**fields)
         return result
+
+    def get_interval_data(
+        self, date_string: str, date_formats: Iterable[str] | None = None
+    ) -> "DateInterval":
+        """
+        Parse string representing date and/or time, and return the minimal
+        interpretable time interval with precision metadata.
+
+        Takes the same arguments as :meth:`get_date_data` and parses with the
+        same rules, but instead of a single datetime it returns a
+        :class:`~dateparser.interval.DateInterval` describing the interval
+        that the explicitly parsed parts determine: ``[start, end)`` on
+        calendar boundaries (a month is a calendar month, not 30 days; a day
+        in a time zone that crosses a DST transition is not 24 hours), the
+        ``precision`` of the input, the source of each part of the result
+        (``"input"``, ``"relative_base"`` or ``"preference"``), and the
+        ``base`` and ``meaning`` for weekday-only and relative inputs.
+
+        The default date selection of :class:`DateData` is not affected.
+
+            >>> parser = DateDataParser()
+            >>> parser.get_interval_data('15 March 2015')
+            DateInterval(start=datetime.datetime(2015, 3, 15, 0, 0), end=datetime.datetime(2015, 3, 16, 0, 0), precision='day', part_sources={'year': 'input', 'month': 'input', 'day': 'input'}, base=None, meaning=None, reason=None)
+
+        """
+        date_data = self.get_date_data(date_string, date_formats)
+        return interval_from_date_data(date_data, self._settings)
 
     def _get_applicable_locales(
         self, date_string: str, ignore_surrounding_text: bool = False
