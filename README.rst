@@ -258,6 +258,29 @@ You can also ignore incomplete dates by setting the ``STRICT_PARSING`` flag:
 
 For more on handling incomplete dates, see the `settings documentation <https://dateparser.readthedocs.io/en/latest/settings.html>`__.
 
+Parsing Date Ranges
+-------------------
+
+Explicit two-ended ranges such as "2025年3月3日至5日" or
+"30 Dec–2 Jan 2026" are parsed with ``parse_date_range``. The ends share the
+year and month they omit, and the result contains both the closed ends and a
+standardized half-open interval. A cross-month or cross-year carry happens
+only when the text forces a unique one; otherwise the result is marked
+ambiguous instead of guessing.
+
+.. code:: python
+
+    >>> from dateparser import parse_date_range
+    >>> r = parse_date_range('2025年3月3日至5日', languages=['zh'])
+    >>> r.start, r.end
+    (datetime.datetime(2025, 3, 3, 0, 0), datetime.datetime(2025, 3, 5, 0, 0))
+    >>> r.interval_start, r.interval_end
+    (datetime.datetime(2025, 3, 3, 0, 0), datetime.datetime(2025, 3, 6, 0, 0))
+
+Standalone dates still use ``dateparser.parse``. Strings that are not
+explicit ranges return ``None``, and inconsistent time zones (one aware end,
+one naive) raise ``ValueError``.
+
 Search for Dates in Longer Chunks of Text
 -----------------------------------------
 

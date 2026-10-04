@@ -962,6 +962,30 @@ class DateDataParser:
         result: tuple[Any, ...] = date_tuple(**fields)
         return result
 
+    def get_date_range_data(
+        self, date_string: str, date_formats: Iterable[str] | None = None
+    ):
+        """Parse an explicit date range using the same language and settings
+        configuration as this parser. See
+        :func:`dateparser.parse_date_range`.
+
+        :return: a :class:`~dateparser.DateRangeData`, or ``None`` when the
+            string is not an explicit range.
+        """
+        from dateparser.ranges import DateRangeParser
+
+        range_parser = DateRangeParser(
+            languages=self.languages,
+            locales=self.locales,
+            region=self.region,
+            settings=self._settings,
+            detect_languages_function=self.detect_languages_function,
+        )
+        data = range_parser.get_date_range_data(date_string, date_formats)
+        if data.start is None and not data.ambiguous:
+            return None
+        return data
+
     def _get_applicable_locales(
         self, date_string: str, ignore_surrounding_text: bool = False
     ) -> Iterator["Locale"]:

@@ -36,6 +36,14 @@ dateparser.date_parser module
    :undoc-members:
    :show-inheritance:
 
+dateparser.ranges module
+------------------------
+
+.. automodule:: dateparser.ranges
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dateparser.freshness_date_parser module
 ---------------------------------------
 

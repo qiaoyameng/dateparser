@@ -16,6 +16,7 @@ Contents:
 
    installation
    usage
+   date_ranges
    settings
    custom_language_detection
    performance
@@ -29,4 +30,3 @@ Contents:
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-
