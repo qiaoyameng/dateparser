@@ -8,6 +8,7 @@ from ._parts_of_day import PartOfDay as PartOfDay
 from ._parts_of_day import PartsOfDay as PartsOfDay
 from .conf import Settings, apply_settings
 from .date import DateDataParser as DateDataParser
+from .interval import IntervalData as IntervalData
 
 _default_parser = DateDataParser()
 
@@ -86,3 +87,50 @@ def parse(
     data = parser.get_date_data(date_string, date_formats)
     date_obj: datetime | None = data["date_obj"]
     return date_obj
+
+
+@apply_settings
+def parse_interval(
+    date_string: str,
+    date_formats: Iterable[str] | None = None,
+    languages: Iterable[str] | None = None,
+    locales: Iterable[str] | None = None,
+    region: str | None = None,
+    settings: Settings | dict[str, Any] | None = None,
+    detect_languages_function: Callable[..., list[str]] | None = None,
+) -> IntervalData | None:
+    """Parse date and time from given date string, returning the smallest
+    calendar interval consistent with the parts of the string that were
+    explicitly given, instead of a single point in time.
+
+    Takes the same arguments as :func:`parse`.
+
+    :return: an :class:`IntervalData <dateparser.interval.IntervalData>`
+        with the interval bounds, its precision and the provenance of each
+        date part, or ``None`` if no date could be parsed.
+
+    .. versionadded:: VERSION
+    """
+    assert isinstance(settings, Settings)
+    parser = _default_parser
+
+    if (
+        languages
+        or locales
+        or region
+        or detect_languages_function
+        or not settings._default
+    ):
+        parser = DateDataParser(
+            languages=languages,
+            locales=locales,
+            region=region,
+            settings=settings,
+            detect_languages_function=detect_languages_function,
+        )
+
+    data = parser.get_interval_data(date_string, date_formats)
+    if data.start is None and data.precision is None:
+        # No date could be parsed at all; mirror parse() returning None.
+        return None
+    return data

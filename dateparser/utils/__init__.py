@@ -114,6 +114,20 @@ def _get_missing_parts(fmt: str) -> list[str]:
     return [field for field in ("day", "month", "year") if field not in parts]
 
 
+def _format_time_resolution(fmt: str) -> str | None:
+    """Return the finest time unit that the directives of *fmt* determine,
+    or ``None`` if the format has no time directive."""
+    if "%f" in fmt:
+        return "microsecond"
+    if "%S" in fmt:
+        return "second"
+    if "%M" in fmt:
+        return "minute"
+    if "%H" in fmt or "%I" in fmt:
+        return "hour"
+    return None
+
+
 def get_timezone_from_tz_string(tz_string: str) -> tzinfo:
     try:
         return timezone(tz_string)

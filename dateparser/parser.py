@@ -10,6 +10,7 @@ import pytz
 import regex as re
 
 from dateparser.utils import (
+    _format_time_resolution,
     _get_missing_parts,
     _get_parts,
     _now,
@@ -86,8 +87,9 @@ def _parse_absolute(
     settings: "Settings",
     tz: tzinfo | None = None,
     date_order: str | None = None,
+    hints: dict[str, Any] | None = None,
 ) -> tuple[datetime, str | None, tuple[str, ...]]:
-    return _parser.parse(datestring, settings, tz, date_order=date_order)
+    return _parser.parse(datestring, settings, tz, date_order=date_order, hints=hints)
 
 
 def _parse_nospaces(
@@ -95,8 +97,25 @@ def _parse_nospaces(
     settings: "Settings",
     tz: tzinfo | None = None,
     date_order: str | None = None,
+    hints: dict[str, Any] | None = None,
 ) -> tuple[datetime, str, tuple[str, ...]]:
-    return _no_spaces_parser.parse(datestring, settings, date_order=date_order)
+    return _no_spaces_parser.parse(
+        datestring, settings, date_order=date_order, hints=hints
+    )
+
+
+def _time_token_resolution(token: str) -> str:
+    """Return the finest time unit present in a time token like ``"10:30"``,
+    ``"10:30:45.123456"`` or ``"2 pm"``."""
+    core = token.split()[0]
+    if "." in core:
+        fraction = core.rsplit(".", 1)[1]
+        return "millisecond" if len(fraction) <= 3 else "microsecond"
+    if core.count(":") >= 2:
+        return "second"
+    if ":" in core:
+        return "minute"
+    return "hour"
 
 
 class _time_parser:
@@ -207,18 +226,33 @@ class _no_spaces_parser:
 
     @classmethod
     def _find_best_matching_date(
-        cls, datestring: str
+        cls, datestring: str, hints: dict[str, Any] | None = None
     ) -> tuple[datetime, str, tuple[str, ...]] | None:
         for fmt in cls._preferred_formats_ordered_8_digit:
             with contextlib.suppress(Exception):
                 dt = strptime(datestring, fmt), cls._get_period(fmt), _get_parts(fmt)
                 if len(str(dt[0].year)) == 4:
+                    cls._fill_interval_hints(hints, fmt)
                     return dt
         return None
 
     @classmethod
+    def _fill_interval_hints(
+        cls, hints: dict[str, Any] | None, fmt: str | None
+    ) -> None:
+        if hints is None or fmt is None:
+            return
+        resolution = _format_time_resolution(fmt)
+        if resolution:
+            hints["resolution"] = resolution
+
+    @classmethod
     def parse(
-        cls, datestring: str, settings: "Settings", date_order: str | None = None
+        cls,
+        datestring: str,
+        settings: "Settings",
+        date_order: str | None = None,
+        hints: dict[str, Any] | None = None,
     ) -> tuple[datetime, str, tuple[str, ...]]:
         if not no_space_parser_eligibile(datestring):
             raise ValueError(f"Unable to parse date from: {datestring}")
@@ -233,23 +267,27 @@ class _no_spaces_parser:
         else:
             order = cls._default_order
             if EIGHT_DIGIT.match(datestring):
-                dt = cls._find_best_matching_date(datestring)
+                dt = cls._find_best_matching_date(datestring, hints)
                 if dt is not None:
                     return dt
         nsp = cls()
         ambiguous_date: tuple[datetime, str, tuple[str, ...]] | None = None
+        ambiguous_fmt: str | None = None
         for token, _ in tokens.tokenize():
             for fmt in nsp.date_formats[order]:
                 with contextlib.suppress(Exception):
                     dt = strptime(token, fmt), cls._get_period(fmt), _get_parts(fmt)
                     if len(str(dt[0].year)) < 4:
                         ambiguous_date = dt
+                        ambiguous_fmt = fmt
                         continue
 
                     missing = _get_missing_parts(fmt)
                     _check_strict_parsing(missing, settings)
+                    cls._fill_interval_hints(hints, fmt)
                     return dt
         if ambiguous_date:
+            cls._fill_interval_hints(hints, ambiguous_fmt)
             return ambiguous_date
         raise ValueError(f"Unable to parse date from: {datestring}")
 
@@ -605,6 +643,7 @@ class _parser:
         if token_weekday and not (
             self._token_year or self._token_month or self._token_day
         ):
+            self._weekday_only = True
             day_index = calendar.weekday(dateobj.year, dateobj.month, dateobj.day)
             day = token_weekday[:3].lower()
             steps = 0
@@ -728,6 +767,7 @@ class _parser:
         settings: "Settings",
         tz: tzinfo | None = None,
         date_order: str | None = None,
+        hints: dict[str, Any] | None = None,
     ) -> tuple[datetime, str | None, tuple[str, ...]]:
         tokens = list(tokenizer(datestring).tokenize())
         date_order = date_order or settings.DATE_ORDER
@@ -759,7 +799,25 @@ class _parser:
 
         period = po._get_period()
 
+        if hints is not None:
+            po._fill_interval_hints(hints)
+
         return dateobj, period, po._get_parts()
+
+    def _fill_interval_hints(self, hints: dict[str, Any]) -> None:
+        """Record, for the interval result mode, which date parts the string
+        determined and which were filled from the relative base, plus the
+        resolution of an explicit time and the basis of weekday-only dates."""
+        missing = [
+            part for part in ("year", "month", "day") if getattr(self, part) is None
+        ]
+        hints["missing"] = missing
+        if missing or getattr(self, "_weekday_only", False):
+            hints["relative_base"] = self.now
+        if self._token_time is not None:
+            hints["resolution"] = _time_token_resolution(self._token_time)
+        if getattr(self, "_weekday_only", False):
+            hints["basis"] = "weekday"
 
     def _parse(
         self, token_type: int, token: str, skip_component: str | None = None

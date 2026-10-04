@@ -44,6 +44,14 @@ dateparser.freshness_date_parser module
    :undoc-members:
    :show-inheritance:
 
+dateparser.interval module
+--------------------------
+
+.. automodule:: dateparser.interval
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dateparser.search module
 ------------------------
 

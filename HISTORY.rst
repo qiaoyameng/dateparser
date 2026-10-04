@@ -3,6 +3,25 @@
 History
 =======
 
+Unreleased
+----------
+
+New features:
+
+- Add an interval result mode: ``dateparser.parse_interval()`` and
+  ``DateDataParser.get_interval_data()`` return an ``IntervalData`` with
+  the smallest calendar interval consistent with the explicitly given
+  parts of the date string (e.g. ``[2025-03-01, 2025-04-01)`` for
+  ``"March 2025"``), its precision, and the provenance of each date part
+  (given by the string, filled from ``RELATIVE_BASE`` or inferred from a
+  ``PREFER_*`` setting). Interval bounds follow calendar boundaries:
+  months keep their real length and timezone-aware days across DST
+  transitions are 23 or 25 hours long. Weekday-only and relative
+  expressions report the reference datetime they were resolved against,
+  fractional seconds keep the supported resolution, and overflowing or
+  undeterminable bounds report the reason. The ``date_obj`` selection of
+  the existing API is unchanged
+
 1.4.3 (2026-09-03)
 ------------------
 
